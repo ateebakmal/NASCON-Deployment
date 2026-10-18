@@ -19,14 +19,23 @@ async function bootstrap() {
   app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
 
   app.use(cookieParser());
+
+  // WEB_ORIGIN accepts a comma-separated list so Vercel preview deployments
+  // can talk to the same API as the production domain.
+  const origins = config
+    .get<string>("WEB_ORIGIN", "http://localhost:5180")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: config.get<string>("WEB_ORIGIN", "http://localhost:5180"),
+    origin: origins.length === 1 ? origins[0] : origins,
     credentials: true,
   });
 
-  const port = config.get<number>("API_PORT", 4000);
-  await app.listen(port);
+  // Render (and most PaaS hosts) inject the port to bind as PORT.
+  const port = Number(process.env.PORT) || config.get<number>("API_PORT", 4000);
+  await app.listen(port, "0.0.0.0");
   // eslint-disable-next-line no-console
-  console.log(`API listening on http://localhost:${port}`);
+  console.log(`API listening on port ${port}`);
 }
 bootstrap();

@@ -1,0 +1,71 @@
+# Render Blueprint for the Unified Business Management Platform API.
+# Creates: Postgres + Key Value (Valkey/Redis) + the NestJS web service.
+# The web frontend is deployed separately on Vercel.
+
+databases:
+  - name: ubp-postgres
+    databaseName: ubp
+    user: app
+    plan: free
+    region: oregon
+
+services:
+  # BullMQ holds delayed escalation jobs here. `noeviction` is required:
+  # BullMQ refuses to run against an instance that may evict its keys.
+  - type: keyvalue
+    name: ubp-keyvalue
+    plan: free
+    region: oregon
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  - type: web
+    name: ubp-api
+    runtime: node
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    # Render's build environment cannot reach the database over the internal
+    # network, so `migrate deploy` runs at start-up instead. The seed is
+    # guarded by a workspace-name check, so repeated boots are a no-op.
+    buildCommand: >-
+      npm install -g pnpm@9 &&
+      pnpm install --frozen-lockfile --prod=false &&
+      pnpm --filter @ubp/shared build &&
+      pnpm --filter @ubp/api exec prisma generate &&
+      pnpm --filter @ubp/api build
+    startCommand: >-
+      pnpm --filter @ubp/api exec prisma migrate deploy &&
+      pnpm --filter @ubp/api exec prisma db seed &&
+      pnpm --filter @ubp/api start:prod
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ubp-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: ubp-keyvalue
+          property: connectionString
+      - key: SESSION_COOKIE_NAME
+        value: ubp_session
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      - key: ESCALATION_MIN_WINDOW_SECONDS
+        value: "3"
+      # Keeps the seeded WhatsApp webhook URL stable across reseeds, so the
+      # URL registered in Meta's console does not have to be updated again.
+      - key: WHATSAPP_WEBHOOK_KEY
+        value: relay-sunpeak-whatsapp
+      # Set after the Vercel deploy: the exact frontend origin, no trailing
+      # slash. Comma-separate to allow preview URLs too.
+      - key: WEB_ORIGIN
+        sync: false
+      # This service's own public URL, used to build provider callback URLs.
+      - key: PUBLIC_BASE_URL
+        sync: false

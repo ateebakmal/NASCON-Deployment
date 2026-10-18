@@ -45,7 +45,7 @@ export class AuthController {
     const cookieName = this.config.get<string>("SESSION_COOKIE_NAME", "ubp_session");
     const rawToken = req.cookies?.[cookieName];
     if (rawToken) await this.auth.logout(rawToken);
-    res.clearCookie(cookieName);
+    res.clearCookie(cookieName, this.cookieOptions());
     return { success: true };
   }
 
@@ -57,11 +57,24 @@ export class AuthController {
   private setSessionCookie(res: Response, rawToken: string, ttlHours: number) {
     const cookieName = this.config.get<string>("SESSION_COOKIE_NAME", "ubp_session");
     res.cookie(cookieName, rawToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: this.config.get<string>("NODE_ENV") === "production",
+      ...this.cookieOptions(),
       maxAge: ttlHours * 60 * 60 * 1000,
-      path: "/",
     });
+  }
+
+  // In production the web app and the API sit on different hosts (Vercel and
+  // Render), so the session cookie is cross-site: browsers only send it when
+  // it is SameSite=None, and only accept SameSite=None over HTTPS. Locally
+  // both run on localhost over plain HTTP, where Lax is correct and None
+  // would be rejected. clearCookie has to repeat these same attributes or the
+  // browser treats it as a different cookie and logout leaves the old one.
+  private cookieOptions() {
+    const isProd = this.config.get<string>("NODE_ENV") === "production";
+    return {
+      httpOnly: true,
+      sameSite: isProd ? ("none" as const) : ("lax" as const),
+      secure: isProd,
+      path: "/",
+    };
   }
 }
